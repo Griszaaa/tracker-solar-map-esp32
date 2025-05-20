@@ -1,15 +1,13 @@
-#include "TrackerMove.h"
+#include <TrackerMove.h>
+#include <WiFiLogger.h> 
 #include <Arduino.h>
 #include <math.h>
 
-// Konstruktor klasy TrackerMove
-// Inicjalizuje silniki i zmienne za pomocą listy inicjalizacyjnej
 TrackerMove::TrackerMove()
     : motor1(AccelStepper::DRIVER, MOTOR1_STEP_PIN, MOTOR1_DIR_PIN),
       motor2(AccelStepper::DRIVER, MOTOR2_STEP_PIN, MOTOR2_DIR_PIN),
       currentAzimuth(0.0), currentElevation(90.0), minElevation(0.0) {}
-// Funkcja inicjalizująca
-// Ustawia piny, prędkości i akceleracje silników
+
 void TrackerMove::begin() {
     pinMode(MOTOR1_EN_PIN, OUTPUT);
     pinMode(MOTOR2_EN_PIN, OUTPUT);
@@ -25,8 +23,8 @@ void TrackerMove::begin() {
     motor2.setAcceleration(ACCELERATION);
 
     minElevation = calculateMinElevation();
-    Serial.print("Obliczona minimalna elewacja: ");
-    Serial.println(minElevation);
+    Logger.print("Obliczona minimalna elewacja: ");
+    Logger.println(String(minElevation));
 }
 
 float TrackerMove::calculateMinElevation() {
@@ -34,11 +32,9 @@ float TrackerMove::calculateMinElevation() {
     float sin_theta = 1.0 - pow(L / SOLAR_PANEL_R, 2) / 2.0;
     return 180.0 / PI * asin(sin_theta);
 }
-// Funkcja do homingu
-// Ustawia silniki w pozycji zerowej - tracker w pozycji startowej
-// Elewacja 90°, azymut 0°
+
 void TrackerMove::homing() {
-    Serial.println("Rozpoczynanie homingu elewacji...");
+    Logger.println("Rozpoczynanie homingu elewacji...");
     motor1.setSpeed(-SPEED);
     digitalWrite(MOTOR1_EN_PIN, LOW);
     while (digitalRead(LIMIT_SWITCH_1) != LOW) {
@@ -48,9 +44,9 @@ void TrackerMove::homing() {
     digitalWrite(MOTOR1_EN_PIN, HIGH);
     motor1.setCurrentPosition(0);
     currentElevation = 90.0;
-    Serial.println("Homing elewacji zakończony");
+    Logger.println("Homing elewacji zakończony");
 
-    Serial.println("Rozpoczynanie homingu azymutu...");
+    Logger.println("Rozpoczynanie homingu azymutu...");
     motor2.setSpeed(-SPEED);
     digitalWrite(MOTOR2_EN_PIN, LOW);
     while (digitalRead(LIMIT_SWITCH_2) != LOW) {
@@ -60,21 +56,21 @@ void TrackerMove::homing() {
     digitalWrite(MOTOR2_EN_PIN, HIGH);
     motor2.setCurrentPosition(0);
     currentAzimuth = 0.0;
-    Serial.println("Homing azymutu zakończony");
+    Logger.println("Homing azymutu zakończony");
 }
-// Funkcja do ruchu azymutu
+
 void TrackerMove::moveAzimuth(float targetAz) {
     targetAz = constrain(targetAz, 0.0, MAX_AZIMUTH);
     float diff = targetAz - currentAzimuth;
     long steps = (diff * WORM_GEAR_TEETH * STEPS_PER_REV) / 360.0;
 
     if (steps != 0) {
-        Serial.print("Ruch azymutu: ");
-        Serial.print(currentAzimuth);
-        Serial.print("° -> ");
-        Serial.print(targetAz);
-        Serial.print("°, kroki: ");
-        Serial.println(steps);
+        Logger.print("Ruch azymutu: ");
+        Logger.print(String(currentAzimuth));
+        Logger.print("° -> ");
+        Logger.print(String(targetAz));
+        Logger.print("°, kroki: ");
+        Logger.println(String(steps));
 
         digitalWrite(MOTOR2_EN_PIN, LOW);
         motor2.move(steps);
@@ -88,11 +84,11 @@ void TrackerMove::moveAzimuth(float targetAz) {
         motor2.setCurrentPosition(0);
         digitalWrite(MOTOR2_EN_PIN, HIGH);
 
-        Serial.print("Nowy azymut: ");
-        Serial.println(currentAzimuth);
+        Logger.print("Nowy azymut: ");
+        Logger.println(String(currentAzimuth));
     }
 }
-// Funkcja do ruchu elewacji
+
 void TrackerMove::moveElevation(float targetEl) {
     targetEl = constrain(targetEl, minElevation, 90.0);
     float currentLength = SOLAR_PANEL_R * sqrt(2 - 2 * sin(currentElevation * PI / 180.0));
@@ -102,17 +98,17 @@ void TrackerMove::moveElevation(float targetEl) {
     long steps = (targetLength - currentLength) * wormGearRatioEl * stepsPerTurnEl;
 
     if (steps != 0) {
-        Serial.print("Ruch elewacji: ");
-        Serial.print(currentElevation);
-        Serial.print("° -> ");
-        Serial.print(targetEl);
-        Serial.print("°, kroki: ");
-        Serial.print(steps);
-        Serial.print(", długość śruby: ");
-        Serial.print(currentLength);
-        Serial.print("mm -> ");
-        Serial.print(targetLength);
-        Serial.println("mm");
+        Logger.print("Ruch elewacji: ");
+        Logger.print(String(currentElevation));
+        Logger.print("° -> ");
+        Logger.print(String(targetEl));
+        Logger.print("°, kroki: ");
+        Logger.print(String(steps));
+        Logger.print(", długość śruby: ");
+        Logger.print(String(currentLength));
+        Logger.print("mm -> ");
+        Logger.print(String(targetLength));
+        Logger.println("mm");
 
         digitalWrite(MOTOR1_EN_PIN, LOW);
         motor1.move(steps);
@@ -124,31 +120,31 @@ void TrackerMove::moveElevation(float targetEl) {
         digitalWrite(MOTOR1_EN_PIN, HIGH);
         currentElevation = targetEl;
 
-        Serial.print("Nowa elewacja: ");
-        Serial.println(currentElevation);
+        Logger.print("Nowa elewacja: ");
+        Logger.println(String(currentElevation));
     }
 }
-// Funkcja zwracająca aktualny azymut
+
 float TrackerMove::getCurrentAzimuth() const {
     return currentAzimuth;
 }
-// Funkcja zwracająca aktualną elewację
+
 float TrackerMove::getCurrentElevation() const {
     return currentElevation;
 }
-// Funkcja zwracająca minimalną elewację
+
 float TrackerMove::getMinElevation() const {
     return minElevation;
 }
-// Funkcja wykonująca ruch trackerem
+
 void TrackerMove::moveTracker(float targetAz, float targetEl) {
-    Serial.print("Ustawiam panel - Azymut: ");
-    Serial.print(targetAz);
-    Serial.print("°, Elewacja: ");
-    Serial.print(targetEl);
-    Serial.print("° (min elewacja: ");
-    Serial.print(this->getMinElevation());
-    Serial.println("°)");
+    Logger.print("Ustawiam panel - Azymut: ");
+    Logger.print(String(targetAz));
+    Logger.print("°, Elewacja: ");
+    Logger.print(String(targetEl));
+    Logger.print("° (min elewacja: ");
+    Logger.print(String(this->getMinElevation()));
+    Logger.println("°)");
 
     this->moveAzimuth(targetAz);
     this->moveElevation(targetEl);

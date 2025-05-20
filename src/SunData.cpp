@@ -67,6 +67,8 @@ const SunPosition sunData[] = {
   {20, 0, 4.62, 295.92},
   {20, 15, 2.62, 298.77},
   {20, 30, 0.76, 301.67},
+  {20, 45, -0.91, 304.60},
+
 };
 // Definicja liczby danych o pozycji słońca
 const int dataCount = sizeof(sunData)/sizeof(SunPosition);

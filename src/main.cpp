@@ -2,14 +2,16 @@
 #include <Wire.h>
 #include <RTClib.h>
 #include <TrackerMove.h>
+#include <WiFiLogger.h>
 #include <driver/timer.h>
-
 #include "SunData.h"
 
 // Zmienne globalne
 RTC_DS3231 rtc;
 TrackerMove tracker;
 volatile bool timerFlag = false;
+bool trackingEnabled = false;
+
 
 // Konfiguracja timera
 const uint64_t interval_us = 1000000; // 1 sekunda w mikrosekundach
@@ -28,7 +30,6 @@ void processTrackerMovement();
 bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targetElevation);
 bool IRAM_ATTR onTimer(void* arg);
 
-
 void setup() {
   // Inicjalizacja timera
   timer_init(TIMER_GROUP_0, TIMER_0, &timerConfig);
@@ -42,46 +43,60 @@ void setup() {
 }
 
 void loop() {
-  // Sprawdzenie flagi timera
+  Logger.handleClient();
+
+  String cmd = Logger.readCommand();
+  if (cmd == "homing") {
+    Logger.println("Wykonywanie homingu...");
+    trackingEnabled = false;
+    tracker.homing();
+  } else if (cmd == "start") {
+    Logger.println("Tryb śledzenia aktywowany.");
+    trackingEnabled = true;
+    processTrackerMovement(); // ustaw się natychmiast po uruchomieniu
+  }
+
   if (timerFlag) {
     timerFlag = false;
-    processTrackerMovement();
+    if (trackingEnabled) {
+      processTrackerMovement();
+    }
   }
 }
-// Funkcja do inicjalizacji systemu
-void initializeSystem() {
-  Serial.begin(115200);
 
+
+void initializeSystem() {
+  // Serial.begin(115200); // Pozostawione do ewentualnego debugowania lokalnego
+  Logger.begin("SolarTracker", "kamilcanvas");
   Wire.begin(21, 22); // SDA, SCL
 
   if (!rtc.begin()) {
-    Serial.println("Błąd RTC!");
+    Logger.println("Błąd RTC!");
     while(1);
   }
 
   if (rtc.lostPower()) {
-    Serial.println("RTC utracił zasilanie - czas może być nieprawidłowy!");
+    Logger.println("RTC utracił zasilanie - czas może być nieprawidłowy!");
     // rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // Ustaw na czas kompilacji
   }
 
   tracker.begin();
-  tracker.homing();
+  // tracker.homing(); // Homing można wykonać z poziomu klienta
 }
-// Funkcja do wykonywania ruchu trackerem w zależności od pozycji słońca
+
 void processTrackerMovement() {
   DateTime now = rtc.now();
-  // printCurrentTime(now);
-  Serial.print("Aktualny czas: ");
-  Serial.println(now.timestamp());
+  Logger.print("Aktualny czas: ");
+  Logger.println(now.timestamp());
 
   float targetAzimuth, targetElevation;
   if (needsPositionChange(now, targetAzimuth, targetElevation)) {
     tracker.moveTracker(targetAzimuth, targetElevation);
   } else {
-    Serial.println("Pozycja trackera nie wymaga zmiany");
+    Logger.println("Pozycja trackera nie wymaga zmiany");
   }
 }
-// Funkcja sprawdzająca, czy pozycja trackera wymaga zmiany
+
 bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targetElevation) {
   for (int i = 0; i < dataCount - 1; i++) {
     const SunPosition& current = sunData[i];
@@ -92,9 +107,8 @@ bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targe
       
       if (current.elevation < 0) {
         if (tracker.getCurrentAzimuth() != 0 || tracker.getCurrentElevation() != 90) {
-          targetAzimuth = 0;
-          targetElevation = 90;
-          Serial.println("Słońce poniżej horyzontu - panel w pozycji spoczynkowej");
+          tracker.homing();
+          Logger.println("Słońce poniżej horyzontu - panel w pozycji spoczynkowej");
           return true;
         }
         return false;
@@ -107,11 +121,16 @@ bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targe
               abs(tracker.getCurrentElevation() - targetElevation) > 0.1);
     }
   }
+
+  // Jeśli nie znaleziono pasującego wpisu w tablicy — zakończyły się dane
+  tracker.homing();
+  trackingEnabled = false;
+  Logger.println("Brak danych o pozycji słońca — przejście w tryb czuwania (homing)");
   return false;
 }
-// Funkcja wywoływana przez timer
+
+
 bool IRAM_ATTR onTimer(void* arg) {
   timerFlag = true;
-  return true; // return true to yield after ISR
+  return true;
 }
-
