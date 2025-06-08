@@ -16,7 +16,7 @@
 
 // Krańcówki
 #define LIMIT_SWITCH_1    15  // Krańcówka elewacji
-#define LIMIT_SWITCH_2    2   // Krańcówka azymutu (zamieniona z GPIO0)
+#define LIMIT_SWITCH_2    2   // Krańcówka azymutu
 
 
 #define MOTOR_STEPS 200

@@ -76,16 +76,26 @@ void TrackerMove::moveAzimuth(float targetAz) {
         motor2.move(steps);
 
         while (motor2.distanceToGo() != 0) {
+            if (LIMIT_SWITCH_2 == LOW) {
+                Logger.println("Osiągnięto krańcówkę azymutu!");
+                motor2.stop();
+                motor2.setCurrentPosition(0); // Resetuj pozycję
+                currentAzimuth = 0.0; // Ustaw na początkowy azymut
+                Logger.println("Panel ustawiony na azymut 0°.");
+                digitalWrite(MOTOR2_EN_PIN, HIGH);
+                break; // Przerwij ruch
+            }
             motor2.run();
         }
-
+        // Przelicz rzeczywisty kąt na podstawie wykonanych kroków
         float movedDeg = (motor2.currentPosition() * 360.0) / (WORM_GEAR_TEETH * STEPS_PER_REV);
         currentAzimuth = constrain(currentAzimuth + movedDeg, 0.0, MAX_AZIMUTH);
         motor2.setCurrentPosition(0);
         digitalWrite(MOTOR2_EN_PIN, HIGH);
 
         Logger.print("Nowy azymut: ");
-        Logger.println(String(currentAzimuth));
+        Logger.print(String(currentAzimuth));
+        Logger.println("°");
     }
 }
 
@@ -114,6 +124,15 @@ void TrackerMove::moveElevation(float targetEl) {
         motor1.move(steps);
 
         while (motor1.distanceToGo() != 0) {
+            if (LIMIT_SWITCH_1 == LOW) {
+                Logger.println("Osiągnięto krańcówkę elewacji!");
+                motor1.stop();
+                motor1.setCurrentPosition(0); // Resetuj pozycję
+                currentElevation = 90.0; // Ustaw na maksymalną elewację
+                Logger.println("Panel ustawiony na maksymalną elewację 90°.");
+                digitalWrite(MOTOR1_EN_PIN, HIGH);
+                break; // Przerwij ruch
+            }
             motor1.run();
         }
 
@@ -121,7 +140,8 @@ void TrackerMove::moveElevation(float targetEl) {
         currentElevation = targetEl;
 
         Logger.print("Nowa elewacja: ");
-        Logger.println(String(currentElevation));
+        Logger.print(String(currentElevation));
+        Logger.println("°");
     }
 }
 
