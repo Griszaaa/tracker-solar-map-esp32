@@ -49,7 +49,9 @@ private:
     float currentAzimuth;
     float currentElevation;
     float minElevation;
-
+    bool elevationHomingDone = false;
+    bool azimuthHomingDone = false;
+    
     float calculateMinElevation();
 };
 

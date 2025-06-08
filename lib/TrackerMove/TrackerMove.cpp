@@ -44,6 +44,7 @@ void TrackerMove::homing() {
     digitalWrite(MOTOR1_EN_PIN, HIGH);
     motor1.setCurrentPosition(0);
     currentElevation = 90.0;
+    elevationHomingDone = true;
     Logger.println("Homing elewacji zakończony");
 
     Logger.println("Rozpoczynanie homingu azymutu...");
@@ -56,6 +57,7 @@ void TrackerMove::homing() {
     digitalWrite(MOTOR2_EN_PIN, HIGH);
     motor2.setCurrentPosition(0);
     currentAzimuth = 0.0;
+    azimuthHomingDone = true;
     Logger.println("Homing azymutu zakończony");
 }
 
@@ -76,14 +78,19 @@ void TrackerMove::moveAzimuth(float targetAz) {
         motor2.move(steps);
 
         while (motor2.distanceToGo() != 0) {
-            if (LIMIT_SWITCH_2 == LOW) {
+            if (azimuthHomingDone) {
+                if (abs(motor2.currentPosition()) > 200)
+                    azimuthHomingDone = false;
+            } else {
+                if (digitalRead(LIMIT_SWITCH_2) == LOW) {
                 Logger.println("Osiągnięto krańcówkę azymutu!");
                 motor2.stop();
-                motor2.setCurrentPosition(0); // Resetuj pozycję
-                currentAzimuth = 0.0; // Ustaw na początkowy azymut
+                motor2.setCurrentPosition(0);
+                currentAzimuth = 0.0;
                 Logger.println("Panel ustawiony na azymut 0°.");
                 digitalWrite(MOTOR2_EN_PIN, HIGH);
-                break; // Przerwij ruch
+                break;
+                }
             }
             motor2.run();
         }
@@ -124,14 +131,19 @@ void TrackerMove::moveElevation(float targetEl) {
         motor1.move(steps);
 
         while (motor1.distanceToGo() != 0) {
-            if (LIMIT_SWITCH_1 == LOW) {
+            if (elevationHomingDone) {
+                if (abs(motor1.currentPosition()) > 600)
+                    elevationHomingDone = false;
+            } else {
+                if (digitalRead(LIMIT_SWITCH_1) == LOW) {
                 Logger.println("Osiągnięto krańcówkę elewacji!");
                 motor1.stop();
-                motor1.setCurrentPosition(0); // Resetuj pozycję
-                currentElevation = 90.0; // Ustaw na maksymalną elewację
-                Logger.println("Panel ustawiony na maksymalną elewację 90°.");
+                motor1.setCurrentPosition(0);
+                currentElevation = 90.0;
+                Logger.println("Panel ustawiony na elewację 90°.");
                 digitalWrite(MOTOR1_EN_PIN, HIGH);
-                break; // Przerwij ruch
+                break;
+                }
             }
             motor1.run();
         }

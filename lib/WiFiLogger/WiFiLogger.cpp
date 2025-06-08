@@ -55,7 +55,7 @@ void WiFiLogger::printf(const char *format, ...) {
 }
 
 bool WiFiLogger::isClientConnected() {
-    return _clientConnected;
+    return _client && _clientConnected;
 }
 
 void WiFiLogger::handleClient() {

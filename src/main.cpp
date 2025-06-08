@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <RTClib.h>
+#include <WiFi.h>
 #include <TrackerMove.h>
 #include <WiFiLogger.h>
 #include <driver/timer.h>
@@ -12,9 +13,15 @@ TrackerMove tracker;
 volatile bool timerFlag = false;
 bool trackingEnabled = false;
 
+// Ustawienia Wi-Fi i NTP
+const char* ssid = "WiadomoCoTegoTen";
+const char* password = "J3bacA1R20";
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 3600;         // GMT+1
+const int daylightOffset_sec = 3600;     // +1h dla czasu letniego
 
 // Konfiguracja timera
-const uint64_t interval_us = 1000000; // 1 sekunda w mikrosekundach
+const uint64_t interval_us = 10000000; // 10 sekund w mikrosekundach
 timer_config_t timerConfig = {
     .alarm_en = TIMER_ALARM_EN,
     .counter_en = TIMER_PAUSE,
@@ -26,11 +33,16 @@ timer_config_t timerConfig = {
 
 // Deklaracje funkcji
 void initializeSystem();
+void syncTimeWithNTP();
 void processTrackerMovement();
 bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targetElevation);
 bool IRAM_ATTR onTimer(void* arg);
 
 void setup() {
+
+  // Synchronizacja czasu przez NTP
+  // syncTimeWithNTP();
+
   // Inicjalizacja timera
   timer_init(TIMER_GROUP_0, TIMER_0, &timerConfig);
   timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
@@ -53,7 +65,15 @@ void loop() {
   } else if (cmd == "start") {
     Logger.println("Tryb śledzenia aktywowany.");
     trackingEnabled = true;
-    processTrackerMovement(); // ustaw się natychmiast po uruchomieniu
+    processTrackerMovement();
+  } else if (cmd == "stop") {
+    Logger.println("Tryb śledzenia dezaktywowany.");
+    trackingEnabled = false;
+  } else if (cmd == "syncTime") {
+    trackingEnabled = false;
+    Logger.println("Synchronizacja czasu z NTP...");
+    Logger.println("Logi przez Serial...");
+    syncTimeWithNTP();
   }
 
   if (timerFlag) {
@@ -64,10 +84,10 @@ void loop() {
   }
 }
 
-
 void initializeSystem() {
-  // Serial.begin(115200); // Pozostawione do ewentualnego debugowania lokalnego
-  Logger.begin("SolarTracker", "kamilcanvas");
+
+  WiFi.mode(WIFI_AP);
+  Logger.begin("SolarTracker", "SolarTracker", 23);
   Wire.begin(21, 22); // SDA, SCL
 
   if (!rtc.begin()) {
@@ -77,12 +97,68 @@ void initializeSystem() {
 
   if (rtc.lostPower()) {
     Logger.println("RTC utracił zasilanie - czas może być nieprawidłowy!");
-    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // Ustaw na czas kompilacji
+    // Ustawiono już w syncTimeWithNTP, ale można też ustawić kompilacyjny
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
   tracker.begin();
-  // tracker.homing(); // Homing można wykonać z poziomu klienta
 }
+
+void syncTimeWithNTP() {
+  Serial.begin(115200);
+  Serial.println("Rozpoczynanie synchronizacji czasu NTP...");
+
+  // Zmień tryb WiFi na klienta (STA)
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  Serial.println("Łączenie z WiFi: ");
+
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 30) {
+    delay(500);
+    Serial.print(".");
+    retry++;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Nie udało się połączyć z WiFi — pomijam synchronizację.");
+    return;
+  }
+
+  Serial.println("Połączono z WiFi!");
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("Czekam na synchronizację czasu NTP...");
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.println("Błąd pobierania czasu przez NTP");
+    delay(1000);
+  }
+
+  char timeBuffer[32];
+  strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  Serial.print("Czas NTP: ");
+  Serial.println(timeBuffer);
+
+  if (!rtc.begin()) {
+    Serial.println("Nie znaleziono RTC!");
+    while (1);
+  }
+
+  rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                      timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+
+  Serial.println("RTC zsynchronizowany!");
+
+  // Po synchronizacji — wróć do trybu Access Point
+  WiFi.disconnect(true);
+  Serial.println("Powrót do trybu Access Point — Logger gotowy!");
+  WiFi.mode(WIFI_AP);
+  Logger.begin("SolarTracker", "SolarTracker", 23);
+}
+
 
 void processTrackerMovement() {
   DateTime now = rtc.now();
@@ -98,36 +174,50 @@ void processTrackerMovement() {
 }
 
 bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targetElevation) {
-  for (int i = 0; i < dataCount - 1; i++) {
-    const SunPosition& current = sunData[i];
-    const SunPosition& next = sunData[i+1];
-    
-    if ((now.hour() > current.hour || (now.hour() == current.hour && now.minute() >= current.minute)) &&
-        (now.hour() < next.hour || (now.hour() == next.hour && now.minute() < next.minute))) {
-      
-      if (current.elevation < 0) {
-        if (tracker.getCurrentAzimuth() != 0 || tracker.getCurrentElevation() != 90) {
-          tracker.homing();
-          Logger.println("Słońce poniżej horyzontu - panel w pozycji spoczynkowej");
-          return true;
+    for (int i = 0; i < dataCount - 1; i++) {
+        const SunPosition& current = sunData[i];
+        const SunPosition& next = sunData[i + 1];
+
+        DateTime currentTime(now.year(), now.month(), now.day(), current.hour, current.minute, 0);
+        DateTime nextTime(now.year(), now.month(), now.day(), next.hour, next.minute, 0);
+
+        if (now >= currentTime && now < nextTime) {
+            if (current.elevation < 0) {
+                if (tracker.getCurrentAzimuth() != 0 || tracker.getCurrentElevation() != 90) {
+                    targetAzimuth = 0.0;
+                    targetElevation = 90.0;
+                    Logger.println("Słońce poniżej horyzontu - panel w pozycji spoczynkowej");
+                    return true;
+                }
+                return false;
+            }
+
+            targetAzimuth = current.azimuth;
+            targetElevation = 90.0 - current.elevation;
+            return (abs(tracker.getCurrentAzimuth() - targetAzimuth) > 0.1 ||
+                    abs(tracker.getCurrentElevation() - targetElevation) > 0.1);
         }
-        return false;
-      }
-
-      targetAzimuth = current.azimuth;
-      targetElevation = 90.0 - current.elevation;
-
-      return (abs(tracker.getCurrentAzimuth() - targetAzimuth) > 0.1 || 
-              abs(tracker.getCurrentElevation() - targetElevation) > 0.1);
     }
-  }
 
-  // Jeśli nie znaleziono pasującego wpisu w tablicy — zakończyły się dane
-  tracker.homing();
-  trackingEnabled = false;
-  Logger.println("Brak danych o pozycji słońca — przejście w tryb czuwania (homing)");
-  return false;
+    // Ostatni punkt danych i 15-minutowe okno łaski
+    const SunPosition& last = sunData[dataCount - 1];
+    DateTime lastTime(now.year(), now.month(), now.day(), last.hour, last.minute, 0);
+    DateTime graceUntil = lastTime + TimeSpan(0, 0, 15, 0);  // 15 minut zapasu
+    Logger.println("Koniec zakresu danych - ustawiona ostatnia znana pozycja Słońca.");
+
+    if (now >= lastTime && now < graceUntil) {
+        targetAzimuth = last.azimuth;
+        targetElevation = 90.0 - last.elevation;
+        return (abs(tracker.getCurrentAzimuth() - targetAzimuth) > 0.1 ||
+                abs(tracker.getCurrentElevation() - targetElevation) > 0.1);
+    }
+
+    Logger.println("Brak danych o pozycji słońca — przejście w tryb czuwania (homing)");
+    tracker.homing();
+    trackingEnabled = false;
+    return false;
 }
+
 
 
 bool IRAM_ATTR onTimer(void* arg) {
