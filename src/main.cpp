@@ -1,21 +1,25 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <RTClib.h>
 #include <WiFi.h>
 #include <TrackerMove.h>
 #include <WiFiLogger.h>
 #include <driver/timer.h>
+#include <RTClib.h>  // Zachowujemy DateTime do wygodnych operacji czasowych
 #include "SunData.h"
 
+#define WIFI_LED 3 // Pin diody LED Wi-Fi
+
+
 // Zmienne globalne
-RTC_DS3231 rtc;
 TrackerMove tracker;
 volatile bool timerFlag = false;
 bool trackingEnabled = false;
+String startupLog; // Bufor na logi startowe
 
 // Ustawienia Wi-Fi i NTP
-const char* ssid = "WiadomoCoTegoTen";
-const char* password = "J3bacA1R20";
+// const char* ssid = "WiadomoCoTegoTen";
+// const char* password = "J3bacA1R20";
+const char* ssid = "Redmi Note 12 Pro";
+const char* password = "12345678";
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 3600;         // GMT+1
 const int daylightOffset_sec = 3600;     // +1h dla czasu letniego
@@ -39,9 +43,6 @@ bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targe
 bool IRAM_ATTR onTimer(void* arg);
 
 void setup() {
-
-  // Synchronizacja czasu przez NTP
-  // syncTimeWithNTP();
 
   // Inicjalizacja timera
   timer_init(TIMER_GROUP_0, TIMER_0, &timerConfig);
@@ -74,7 +75,45 @@ void loop() {
     Logger.println("Synchronizacja czasu z NTP...");
     Logger.println("Logi przez Serial...");
     syncTimeWithNTP();
-  }
+  } else if (cmd == "move") {
+    if (trackingEnabled) {
+      Logger.println("Dezaktywuj tryb śledzenia przed ręcznym ustawieniem pozycji trackera.");
+      return;
+    }
+    Logger.println("Ręczne ustawienie pozycji trackera.\nPodaj azymut:");
+    float azimuth = 0.0f;
+    while (true) {
+      String azStr = Logger.readCommand();
+      if (azStr.length() > 0) {
+        azimuth = azStr.toFloat();
+        break;
+      }
+      delay(10);
+    }
+
+    Logger.println("Podaj elewację:");
+    float elevation = 0.0f;
+    while (true) {
+      String elStr = Logger.readCommand();
+      if (elStr.length() > 0) {
+        elevation = elStr.toFloat();
+        break;
+      }
+      delay(10);
+    }
+
+    tracker.moveTracker(azimuth, elevation);
+  } else if (cmd == "status") {
+    if (!trackingEnabled) {
+      Logger.println("Tryb śledzenia jest wyłączony.");
+    } else {
+      Logger.println("Tryb śledzenia jest aktywny.");
+    }
+    Logger.print("Aktualna pozycja trackera: Azymut = ");
+    Logger.print(String(tracker.getCurrentAzimuth()));
+    Logger.print(", Elewacja = ");
+    Logger.println(String(tracker.getCurrentElevation()));
+  } 
 
   if (timerFlag) {
     timerFlag = false;
@@ -82,36 +121,27 @@ void loop() {
       processTrackerMovement();
     }
   }
+  digitalWrite(WIFI_LED, Logger.isClientConnected() ? LOW : HIGH); // Włącz diodę LED, gdy tryb śledzenia jest aktywny
 }
 
 void initializeSystem() {
-
   WiFi.mode(WIFI_AP);
   Logger.begin("SolarTracker", "SolarTracker", 23);
-  Wire.begin(21, 22); // SDA, SCL
-
-  if (!rtc.begin()) {
-    Logger.println("Błąd RTC!");
-    while(1);
-  }
-
-  if (rtc.lostPower()) {
-    Logger.println("RTC utracił zasilanie - czas może być nieprawidłowy!");
-    // Ustawiono już w syncTimeWithNTP, ale można też ustawić kompilacyjny
-    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
-
   tracker.begin();
+  
+  pinMode(WIFI_LED, OUTPUT);
+  digitalWrite(WIFI_LED, HIGH); // Wyłącz diodę LED
 }
 
 void syncTimeWithNTP() {
   Serial.begin(115200);
   Serial.println("Rozpoczynanie synchronizacji czasu NTP...");
 
-  // Zmień tryb WiFi na klienta (STA)
   WiFi.disconnect(true);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  WiFi.setHostname("SolarTrackerESP32");
+
 
   Serial.println("Łączenie z WiFi: ");
 
@@ -141,27 +171,27 @@ void syncTimeWithNTP() {
   strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
   Serial.print("Czas NTP: ");
   Serial.println(timeBuffer);
-
-  if (!rtc.begin()) {
-    Serial.println("Nie znaleziono RTC!");
-    while (1);
-  }
-
-  rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                      timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-
-  Serial.println("RTC zsynchronizowany!");
-
-  // Po synchronizacji — wróć do trybu Access Point
   WiFi.disconnect(true);
   Serial.println("Powrót do trybu Access Point — Logger gotowy!");
   WiFi.mode(WIFI_AP);
   Logger.begin("SolarTracker", "SolarTracker", 23);
 }
 
-
 void processTrackerMovement() {
-  DateTime now = rtc.now();
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Logger.println("Błąd pobierania lokalnego czasu!");
+    return;
+  }
+  DateTime now(
+    timeinfo.tm_year + 1900,
+    timeinfo.tm_mon + 1,
+    timeinfo.tm_mday,
+    timeinfo.tm_hour,
+    timeinfo.tm_min,
+    timeinfo.tm_sec
+  );
+
   Logger.print("Aktualny czas: ");
   Logger.println(now.timestamp());
 
@@ -199,10 +229,9 @@ bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targe
         }
     }
 
-    // Ostatni punkt danych i 15-minutowe okno łaski
     const SunPosition& last = sunData[dataCount - 1];
     DateTime lastTime(now.year(), now.month(), now.day(), last.hour, last.minute, 0);
-    DateTime graceUntil = lastTime + TimeSpan(0, 0, 15, 0);  // 15 minut zapasu
+    DateTime graceUntil = lastTime + TimeSpan(0, 0, 15, 0);
     Logger.println("Koniec zakresu danych - ustawiona ostatnia znana pozycja Słońca.");
 
     if (now >= lastTime && now < graceUntil) {
@@ -217,8 +246,6 @@ bool needsPositionChange(const DateTime& now, float& targetAzimuth, float& targe
     trackingEnabled = false;
     return false;
 }
-
-
 
 bool IRAM_ATTR onTimer(void* arg) {
   timerFlag = true;

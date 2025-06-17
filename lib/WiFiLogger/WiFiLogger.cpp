@@ -58,18 +58,28 @@ bool WiFiLogger::isClientConnected() {
     return _client && _clientConnected;
 }
 
+extern String startupLog; // Dodaj na górze pliku
+
 void WiFiLogger::handleClient() {
     if (!_clientConnected) {
         _client = _server.available();
         if (_client) {
             _clientConnected = true;
             println("Nowy klient połączony");
+            // Wyślij logi startowe po połączeniu klienta
+            if (startupLog.length() > 0) {
+                print(startupLog);
+                // Możesz wyczyścić bufor, jeśli chcesz wysłać logi tylko raz:
+                // startupLog = "";
+            }
+            digitalWrite(WIFI_LED, LOW); // Zapal diodę gdy klient się połączy
         }
     } else {
         if (!_client.connected()) {
             _clientConnected = false;
             println("Nowy klient rozłączony");
             _client.stop();
+            digitalWrite(WIFI_LED, HIGH); // Zgaś diodę gdy klient się rozłączy
         }
     }
 }
@@ -81,4 +91,12 @@ String WiFiLogger::readCommand() {
         return command;
     }
     return "";
+}
+float WiFiLogger::readFloat() {
+    if (_clientConnected && _client.available()) {
+        String floatStr = _client.readStringUntil('\n');
+        floatStr.trim(); // usuwa białe znaki i \r\n
+        return floatStr.toFloat();
+    }
+    return 0.0f; // lub inna wartość domyślna
 }

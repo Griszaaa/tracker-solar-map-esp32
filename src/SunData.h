@@ -2,7 +2,7 @@
 #define SUNDATA_H
 #include <Arduino.h>
 
-// Struktury danych
+// Struktura danych
 struct SunPosition {
   uint8_t hour;
   uint8_t minute;

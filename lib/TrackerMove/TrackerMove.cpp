@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <math.h>
 
+extern String startupLog; // Dodaj na górze pliku
+
 TrackerMove::TrackerMove()
     : motor1(AccelStepper::DRIVER, MOTOR1_STEP_PIN, MOTOR1_DIR_PIN),
       motor2(AccelStepper::DRIVER, MOTOR2_STEP_PIN, MOTOR2_DIR_PIN),
@@ -13,9 +15,13 @@ void TrackerMove::begin() {
     pinMode(MOTOR2_EN_PIN, OUTPUT);
     pinMode(LIMIT_SWITCH_1, INPUT_PULLUP);
     pinMode(LIMIT_SWITCH_2, INPUT_PULLUP);
+    pinMode(MOVING_AZIMUTH_LED, OUTPUT);
+    pinMode(MOVING_ELEVATION_LED, OUTPUT);
 
     digitalWrite(MOTOR1_EN_PIN, HIGH);
     digitalWrite(MOTOR2_EN_PIN, HIGH);
+    digitalWrite(MOVING_AZIMUTH_LED, HIGH);
+    digitalWrite(MOVING_ELEVATION_LED, HIGH);
 
     motor1.setMaxSpeed(SPEED);
     motor1.setAcceleration(ACCELERATION);
@@ -23,8 +29,9 @@ void TrackerMove::begin() {
     motor2.setAcceleration(ACCELERATION);
 
     minElevation = calculateMinElevation();
-    Logger.print("Obliczona minimalna elewacja: ");
-    Logger.println(String(minElevation));
+    startupLog += "Obliczona minimalna elewacja: " + String(minElevation) + "\n";
+    loadPosition(); // Wczytaj pozycję z pamięci
+    startupLog += "Wczytano pozycję: Azymut = " + String(currentAzimuth) + ", Elewacja = " + String(currentElevation) + "\n";
 }
 
 float TrackerMove::calculateMinElevation() {
@@ -35,6 +42,7 @@ float TrackerMove::calculateMinElevation() {
 
 void TrackerMove::homing() {
     Logger.println("Rozpoczynanie homingu elewacji...");
+    digitalWrite(MOVING_ELEVATION_LED, LOW); // LED ON
     motor1.setSpeed(-SPEED);
     digitalWrite(MOTOR1_EN_PIN, LOW);
     while (digitalRead(LIMIT_SWITCH_1) != LOW) {
@@ -45,9 +53,11 @@ void TrackerMove::homing() {
     motor1.setCurrentPosition(0);
     currentElevation = 90.0;
     elevationHomingDone = true;
+    digitalWrite(MOVING_ELEVATION_LED, HIGH); // LED OFF
     Logger.println("Homing elewacji zakończony");
 
     Logger.println("Rozpoczynanie homingu azymutu...");
+    digitalWrite(MOVING_AZIMUTH_LED, LOW); // LED ON
     motor2.setSpeed(-SPEED);
     digitalWrite(MOTOR2_EN_PIN, LOW);
     while (digitalRead(LIMIT_SWITCH_2) != LOW) {
@@ -58,7 +68,10 @@ void TrackerMove::homing() {
     motor2.setCurrentPosition(0);
     currentAzimuth = 0.0;
     azimuthHomingDone = true;
+    digitalWrite(MOVING_AZIMUTH_LED, HIGH); // LED OFF
     Logger.println("Homing azymutu zakończony");
+
+    savePosition(); // Zapisz pozycję po homingu
 }
 
 void TrackerMove::moveAzimuth(float targetAz) {
@@ -73,6 +86,8 @@ void TrackerMove::moveAzimuth(float targetAz) {
         Logger.print(String(targetAz));
         Logger.print("°, kroki: ");
         Logger.println(String(steps));
+
+        digitalWrite(MOVING_AZIMUTH_LED, LOW); // LED ON
 
         digitalWrite(MOTOR2_EN_PIN, LOW);
         motor2.move(steps);
@@ -99,6 +114,10 @@ void TrackerMove::moveAzimuth(float targetAz) {
         currentAzimuth = constrain(currentAzimuth + movedDeg, 0.0, MAX_AZIMUTH);
         motor2.setCurrentPosition(0);
         digitalWrite(MOTOR2_EN_PIN, HIGH);
+
+        savePosition(); // Zapisz pozycję po ruchu
+
+        digitalWrite(MOVING_AZIMUTH_LED, HIGH); // LED OFF
 
         Logger.print("Nowy azymut: ");
         Logger.print(String(currentAzimuth));
@@ -127,6 +146,8 @@ void TrackerMove::moveElevation(float targetEl) {
         Logger.print(String(targetLength));
         Logger.println("mm");
 
+        digitalWrite(MOVING_ELEVATION_LED, LOW); // LED ON
+
         digitalWrite(MOTOR1_EN_PIN, LOW);
         motor1.move(steps);
 
@@ -151,10 +172,28 @@ void TrackerMove::moveElevation(float targetEl) {
         digitalWrite(MOTOR1_EN_PIN, HIGH);
         currentElevation = targetEl;
 
+        savePosition(); // Zapisz pozycję po ruchu
+
+        digitalWrite(MOVING_ELEVATION_LED, HIGH); // LED OFF
+
         Logger.print("Nowa elewacja: ");
         Logger.print(String(currentElevation));
         Logger.println("°");
     }
+}
+
+void TrackerMove::loadPosition() {
+    preferences.begin("tracker", true); // tryb tylko do odczytu
+    currentAzimuth = preferences.getFloat("azimuth", 0.0f);
+    currentElevation = preferences.getFloat("elevation", 90.0f);
+    preferences.end();
+}
+
+void TrackerMove::savePosition() {
+    preferences.begin("tracker", false); // tryb do zapisu
+    preferences.putFloat("azimuth", currentAzimuth);
+    preferences.putFloat("elevation", currentElevation);
+    preferences.end();
 }
 
 float TrackerMove::getCurrentAzimuth() const {

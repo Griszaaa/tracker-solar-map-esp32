@@ -5,6 +5,8 @@
 #include <WiFiClient.h>
 #include <WiFiAP.h>
 
+#define WIFI_LED 3 // Pin diody LED Wi-Fi
+
 
 class WiFiLogger {
 public:
@@ -16,6 +18,7 @@ public:
     bool isClientConnected();
     void handleClient();
     String readCommand();
+    float readFloat();
 
 private:
     WiFiServer _server;
